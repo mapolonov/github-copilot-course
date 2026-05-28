@@ -171,7 +171,69 @@ Follow all conventions from .github/copilot-instructions.md"
 
 ### 3.1 Що таке MCP і навіщо він потрібен
 
-MCP (Model Context Protocol) — відкритий стандарт (Anthropic) для підключення AI до зовнішніх даних та інструментів.
+**MCP (Model Context Protocol)** — відкритий стандарт (Anthropic, 2024) для підключення AI-хостів до зовнішніх даних та інструментів. Найближча аналогія: **LSP (Language Server Protocol)**, але замість автодоповнення — доступ до зовнішніх систем.
+
+#### Архітектура: клієнт-сервер поверх JSON-RPC
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  MCP Host / Client                                      │
+│  (VS Code + Copilot Chat, Claude Desktop, курстомний)   │
+└───────────────┬─────────────────────────────────────────┘
+                │  JSON-RPC 2.0
+                │  Транспорт: stdio (локально) або HTTP/SSE (мережа)
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  MCP Server  (GitHub, Jira, PostgreSQL, Filesystem...)  │
+│                                                         │
+│  Оголошує три типи можливостей:                         │
+│                                                         │
+│  Tools     → LLM може ВИКЛИКАТИ (read + write)          │
+│              Приклад: create_issue, run_query, push_code │
+│                                                         │
+│  Resources → LLM може ЧИТАТИ як контекст (read-only)   │
+│              Приклад: definition_of_done, schema.sql     │
+│                                                         │
+│  Prompts   → Готові шаблони для типових задач           │
+│              Приклад: "summarize sprint", "review PR"   │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Як LLM взаємодіє з MCP сервером
+
+```
+1. При старті VS Code → MCP host запитує сервер:
+   "Які tools/resources/prompts ти надаєш?"
+   → Сервер повертає JSON schema кожного інструменту
+
+2. Розробник пише промпт в Copilot Chat
+
+3. LLM аналізує промпт і вирішує: потрібен виклик tool?
+   Якщо так → формує structured tool call:
+   { "tool": "get_issue", "arguments": { "issueKey": "PROJ-123" } }
+
+4. MCP host передає виклик серверу
+
+5. Сервер виконує реальний HTTP виклик до Jira API
+
+6. Повертає результат до LLM
+
+7. LLM включає ці дані у фінальну відповідь
+```
+
+> **MCP ≠ прокси, ≠ брокер повідомлень.**
+> Прокси прозоро переадресовує пакети. Брокер розв'язує publisher від consumer.
+> MCP — це **structured function-calling bus**: LLM сам вирішує *коли* і *який* tool викликати, стандартний протокол позбавляє кожен AI-хост від написання окремої інтеграції під кожен сервіс.
+
+#### MCP vs попередні підходи
+
+| | MCP | RAG (vector search) | Custom plugins |
+|---|---|---|---|
+| Доступ до даних | Pull on demand | Pre-indexed chunks | Ad-hoc HTTP |
+| Write operations | ✅ Так (tools) | ❌ Ні | ✅ Так |
+| Стандартизація | ✅ Відкритий протокол | ❌ Немає | ❌ Кожен vendor різний |
+| Свіжість даних | Real-time | Залежить від індексу | Real-time |
+| Складність setup | Середня | Висока | Висока |
 
 ```
 Без MCP:
