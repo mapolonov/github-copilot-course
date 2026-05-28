@@ -441,6 +441,188 @@ gh copilot suggest "K8s deployment for .NET 8 API with:
 
 ---
 
+## 6. Copilot CLI — нові можливості (2026)
+
+### 6.1 `/fleet` — паралельний запуск кількох агентів
+
+`/fleet` — команда в Copilot CLI, яка замість послідовного виконання запускає **оркестратор**, що розбиває задачу на незалежні треки і виконує їх паралельно.
+
+```bash
+# Базовий синтаксис
+/fleet <опис задачі>
+
+# Або non-interactively:
+copilot -p "/fleet <задача>" --no-ask-user
+```
+
+**Як це працює:**
+1. Оркестратор розбиває задачу на дискретні робочі елементи
+2. Визначає що можна паралелізувати, а що залежить від іншого
+3. Запускає незалежні треки одночасно як background sub-agents
+4. Збирає результати та синтезує фінальний артефакт
+
+Кожен sub-agent отримує власне context window, але **спільну файлову систему**. Агенти не спілкуються між собою — тільки через оркестратор.
+
+**Приклад промпту який добре паралелізується:**
+
+```
+/fleet Implement feature flags in three tracks:
+
+1. API layer: add flag evaluation to src/api/middleware/ 
+   — unit tests for flag evaluation and API endpoints
+
+2. UI: wire toggle components in src/components/flags/
+   — no new dependencies allowed
+
+3. Config: add flag definitions to config/features.yaml
+   — validate against schema
+
+Run independent tracks in parallel. No changes outside assigned directories.
+```
+
+**Приклад із явними залежностями:**
+
+```
+/fleet Migrate the database layer:
+
+1. Write new schema in migrations/005_users.sql
+2. Update ORM models in src/models/ (depends on 1)
+3. Update API handlers in src/api/ (depends on 2)
+4. Write integration tests in tests/ (depends on 2)
+
+Items 3 and 4 can run in parallel after item 2 completes.
+```
+
+**Кастомні агенти для різних треків (`.github/agents/`):**
+
+```yaml
+# .github/agents/technical-writer.md
+---
+name: technical-writer
+description: Documentation specialist
+model: claude-sonnet-4-5
+tools: ["bash", "create", "edit", "view"]
+---
+You write clear, concise technical documentation.
+Follow the project style guide in /docs/styleguide.md.
+```
+
+```bash
+# Використання кастомного агента в fleet
+/fleet Use @technical-writer for all docs tasks, default agent for code changes.
+```
+
+**Коли використовувати `/fleet`:**
+
+```
+✅ ДОБРЕ для /fleet:
+- Рефакторинг у кількох незалежних файлах одночасно
+- Генерація документації для кількох компонентів паралельно
+- Feature яка охоплює API + UI + тести
+- Незалежні зміни у різних модулях
+
+❌ НЕ для /fleet:
+- Лінійна робота в одному файлі (звичайний prompt швидший)
+- Задачі де всі кроки залежать один від одного
+- Зміни з race condition ризиком (два агенти пишуть в один файл)
+```
+
+> **⚠️ Важливо:** Sub-agents спільно використовують filesystem **без file locking**. Якщо два агенти записують в один файл — перемагає останній. Завжди призначайте **distinct файли** кожному треку.
+
+---
+
+### 6.2 Rubber Duck — другий погляд від іншої моделі
+
+Copilot CLI тепер вбудовано підтримує **другу думку**: якщо перша відповідь здається неповною або сумнівною, Rubber Duck запитує іншу модель з іншої сімейства для незалежної оцінки.
+
+```bash
+# Ввімкнути Rubber Duck в налаштуваннях Copilot CLI
+# Потім при будь-якій відповіді доступна кнопка "Ask Rubber Duck"
+
+# Або явно в промпті:
+copilot "Explain this architecture decision" --second-opinion
+```
+
+**Де це корисно в .NET розробці:**
+
+```bash
+# Складний архітектурний вибір
+copilot "Should I use MediatR pipeline behaviors or minimal API filters 
+         for cross-cutting concerns in a high-throughput order service?" 
+         --second-opinion
+
+# Security рішення (завжди краще два погляди)
+copilot "Review this authentication flow for JWT refresh tokens"
+         --second-opinion
+
+# Performance оптимізація
+copilot "Is this EF Core query optimal or is there a better approach?"
+         --second-opinion
+```
+
+Rubber Duck **не замінює** першу відповідь — він дає **різну перспективу** від іншої моделі. Ви вирішуєте яке рішення краще контексту вашого проєкту.
+
+---
+
+### 6.3 Remote Control для Copilot CLI сесій (GA, травень 2026)
+
+Copilot CLI тепер підтримує **remote control** — ви можете почати сесію на ноутбуці та продовжити з телефону або браузера:
+
+```
+Workflow:
+1. Запускаєте задачу в Copilot CLI на своєму комп'ютері
+2. Посилаєте посилання колезі або відкриваєте на телефоні
+3. Сесія продовжується з тим же контекстом де ви зупинилися
+```
+
+```bash
+# Поточна сесія автоматично синхронізується з github.com/copilot
+# Remote sessions доступні через:
+# - github.com (веб)
+# - GitHub Mobile (iOS/Android)  
+# - VS Code (через Copilot Chat panel)
+```
+
+**Практичне застосування:**
+- Почали рефакторинг перед нарадою → продовжуєте з мобільного
+- Довга агентна задача запущена вдома → моніторите прогрес з офісу
+- Делегуєте завершення задачі колезі без передачі контексту вручну
+
+---
+
+### 6.4 One-click fixes для failing GitHub Actions (Copilot Cloud Agent)
+
+Для Copilot Business / Enterprise: у логах будь-якого failing Actions job тепер є кнопка **"Fix with Copilot"**.
+
+```
+Процес:
+1. GitHub Actions job falls
+2. Відкриваєте workflow run logs
+3. Клікаєте "Fix with Copilot"
+4. Copilot cloud agent:
+   a) Аналізує причину помилки в logs
+   b) Вносить fix у ваш branch з власного cloud-based середовища
+   c. Тегає вас на review коли готово
+```
+
+**Типові сценарії:**
+```
+✅ Відмінно підходить для:
+- Linter failures (format, style violations)
+- Failing unit tests після незначної зміни
+- Dependency version conflicts
+- Missing nullable annotations (C# nullable warnings)
+
+⚠️ Перевіряйте вручну:
+- Production database migrations
+- Security-related changes (auth, crypto)
+- Зміни публічних API контрактів
+```
+
+> Потрібно щоб адміністратор увімкнув Copilot cloud agent в Organization settings.
+
+---
+
 ## Практичне завдання (45 хв)
 
 ### Lab CLI-1: Copilot у терміналі

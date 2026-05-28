@@ -239,6 +239,220 @@ This allows developers to ask:
  if we change the Order entity schema?"
 ```
 
+### 3.4 Готові MCP сервери — GitHub та Jira без написання коду
+
+Не завжди потрібно писати власний MCP сервер. Для найпоширеніших інструментів вже існують офіційні або перевірені community реалізації.
+
+#### GitHub MCP Server (офіційний від GitHub)
+
+```jsonc
+// .vscode/mcp.json
+{
+  "servers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${input:githubToken}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "githubToken",
+      "type": "promptString",
+      "description": "GitHub Personal Access Token (repo, issues, PRs scopes)",
+      "password": true
+    }
+  ]
+}
+```
+
+> **Альтернатива з Docker (без npx):**
+> ```jsonc
+> {
+>   "servers": {
+>     "github": {
+>       "type": "stdio",
+>       "command": "docker",
+>       "args": ["run", "-i", "--rm",
+>         "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+>         "ghcr.io/github/github-mcp-server"],
+>       "env": {
+>         "GITHUB_PERSONAL_ACCESS_TOKEN": "${input:githubToken}"
+>       }
+>     }
+>   }
+> }
+> ```
+
+**Що GitHub MCP сервер надає Copilot:**
+
+| Категорія | Інструменти |
+|-----------|-------------|
+| Репозиторії | `get_file_contents`, `search_code`, `list_commits` |
+| Issues | `get_issue`, `list_issues`, `create_issue`, `add_issue_comment` |
+| Pull Requests | `get_pull_request`, `list_pull_requests`, `create_pull_request`, `merge_pull_request` |
+| Actions | `list_workflows`, `get_workflow_run`, `trigger_workflow` |
+| Releases | `get_release`, `list_releases`, `create_release` |
+
+**Приклади промптів з GitHub MCP:**
+
+```
+// Аналіз відкритих issues перед плануванням спринту
+"Look at open issues in owner/repo labeled 'bug' and 'p1'. 
+ Summarize the top 5 by impact, suggest implementation approach for each."
+
+// Розуміння PR перед рев'ю
+"Summarize the changes in PR #142 of owner/repo. 
+ Focus on: what changed in the domain layer, any breaking API changes,
+ missing test coverage."
+
+// Автоматичне створення release notes
+"List all merged PRs to main branch of owner/repo since 2025-05-01.
+ Group by: Features, Bug Fixes, Refactoring. 
+ Format as GitHub release notes markdown."
+
+// Розслідування регресії
+"Search commits in owner/repo for changes to OrderService.cs 
+ in the last 30 days. Find the commit that modified CalculateDiscount method."
+```
+
+---
+
+#### Jira MCP (Atlassian Remote MCP)
+
+Atlassian надає офіційний Remote MCP сервер як хмарний endpoint — не потребує локальної інсталяції.
+
+```jsonc
+// .vscode/mcp.json — додати поруч з іншими серверами
+{
+  "servers": {
+    "atlassian": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/sse",
+      "headers": {
+        "Authorization": "Bearer ${input:atlassianToken}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "atlassianToken",
+      "type": "promptString",
+      "description": "Atlassian API Token (from id.atlassian.com/manage-profile/security/api-tokens)",
+      "password": true
+    }
+  ]
+}
+```
+
+> **Scopes потрібні для API токену:** `read:jira-work`, `write:jira-work`, `read:confluence-content.all`
+
+**Що Atlassian MCP надає Copilot:**
+
+| Продукт | Інструменти |
+|---------|-------------|
+| Jira | `get_issue`, `search_issues` (JQL), `create_issue`, `update_issue`, `get_board`, `get_sprint` |
+| Confluence | `get_page`, `search_pages`, `create_page`, `update_page` |
+
+**Приклади промптів з Jira MCP:**
+
+```
+// Отримати контекст задачі перед реалізацією
+"Get Jira issue PROJECT-1234. Extract: acceptance criteria, 
+ linked issues, and any technical notes in comments. 
+ Then suggest implementation plan for this codebase."
+
+// Sprint planning assist
+"Search Jira for issues in project PROJECT with status 'To Do' 
+ and sprint = 'Sprint 42'. List them with story points and priority. 
+ Flag any that are missing acceptance criteria."
+
+// Автоматизація після реалізації
+"I've implemented Jira issue PROJECT-1234. 
+ Update its status to 'In Review' and add a comment with:
+ - PR link: https://github.com/owner/repo/pull/98
+ - Summary of what was implemented"
+
+// Перевірка Definition of Done
+"Get the Definition of Done from Confluence page 'DOD-Standards' 
+ in space TEAM. Then review the current file changes and tell me 
+ which DoD criteria might not be met."
+```
+
+---
+
+### 3.5 Комбінований workflow: GitHub + Jira + код
+
+Найпотужніший сценарій — коли Copilot може одночасно бачити трекер задач, репозиторій, та поточний код.
+
+```
+Сценарій: розробник починає роботу над задачею
+
+Промпт:
+"I'm starting work on Jira issue PROJECT-567.
+ 1. Get the issue details and acceptance criteria
+ 2. Search our GitHub repo owner/my-service for similar implementations 
+    (look at how we handle similar features)
+ 3. Based on issue requirements and existing code patterns, 
+    suggest implementation plan with file names to create/modify
+ 4. Draft the branch name and initial commit message following our conventions"
+```
+
+```
+Сценарій: підготовка до code review
+
+Промпт:
+"PR #88 in owner/my-service is ready for review.
+ 1. Get the PR description and changed files
+ 2. Get the linked Jira issue from the PR description  
+ 3. Check if all acceptance criteria from the Jira issue are addressed in the PR
+ 4. List any files changed that look risky (auth, payments, migrations)
+ 5. Suggest 3 specific things to verify during manual testing"
+```
+
+```
+Сценарій: пост-інцидент аналіз
+
+Промпт:
+"Incident occurred 2025-05-27. 
+ 1. Search GitHub commits to main in owner/my-service between May 25-27
+ 2. Search Jira for issues deployed in that period (use fix version or sprint)
+ 3. Correlate: which change most likely caused the incident based on 
+    the symptom 'OrderService returning 500 on discount calculation'
+ 4. Create a Jira bug ticket with your findings"
+```
+
+---
+
+### 3.6 Інші корисні MCP сервери
+
+| Інструмент | Пакет / endpoint | Використання |
+|-----------|-----------------|--------------|
+| Linear | `npx @linear/mcp-server` | Issue tracking (альтернатива Jira) |
+| Slack | `npx @slack/mcp-server` | Читання каналів, надсилання повідомлень |
+| Notion | `npx @notionhq/mcp-server` | База знань, документація |
+| PostgreSQL | `npx @modelcontextprotocol/server-postgres` | Прямі SQL запити до БД |
+| Brave Search | `npx @modelcontextprotocol/server-brave-search` | Веб-пошук без браузера |
+| Filesystem | `npx @modelcontextprotocol/server-filesystem` | Доступ до файлів поза workspace |
+| Azure DevOps | `npx @azure-devops/mcp-server` | ADO repos, boards, pipelines |
+
+> **Реєстр MCP серверів:** [mcp.so](https://mcp.so) та [GitHub: modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
+
+**Безпека при підключенні зовнішніх MCP серверів:**
+
+```
+⚠️ Чекліст перед підключенням будь-якого MCP сервера:
+□ Джерело: офіційний vendor або перевірений open-source репозиторій
+□ Права доступу: мінімально необхідні scopes для API токену
+□ Токени: зберігати в VS Code secrets (password: true в inputs), НЕ в .env файлах
+□ Корпоративні дані: не підключати до публічних/невідомих MCP серверів
+□ Аудит: логувати які MCP інструменти викликаються (в enterprise налаштуваннях)
+□ Ротація токенів: API токени для MCP — окремі від CI/CD, ротувати кожні 90 днів
+```
+
 ---
 
 ## 4. GitHub Copilot Enterprise — організаційні можливості
@@ -389,6 +603,228 @@ ONBOARDING:
 Accountability:
 - Monthly report: що покращилося, що не працює, топ-3 промпти місяця
 ```
+
+---
+
+## 7. Нові можливості Copilot — Оновлення 2026
+
+### 7.1 Copilot Memory — Copilot пам'ятає вас
+
+Copilot Memory (травень 2026) — система, де Copilot **автоматично зберігає** ваші уподобання та рішення і застосовує їх у майбутніх взаємодіях.
+
+**Два рівні пам'яті:**
+
+```
+User-level (особисті вподобання):
+- Стиль комітів: "Prefer conventional commits with emoji"
+- Структура PR: "Always include migration checklist"
+- Тон відповідей: "Be terse, I prefer code over explanation"
+- Перевагу мов: "Default to Ukrainian for comments"
+→ Застосовується у ВСІХ репозиторіях де ви працюєте
+
+Repository-level (архітектурні рішення проєкту):
+- "Ми обрали MassTransit замість raw Kafka через X"
+- "Цей сервіс не повинен залежати від Infrastructure проєкту"
+- "PR template вимагає performance benchmark для нових endpoints"
+→ Застосовується тільки в цьому репо, спільна для всієї команди
+```
+
+**Управління пам'яттю:**
+
+```bash
+# VS Code: Copilot Chat → Settings → Memory
+# GitHub Web: github.com/settings/copilot/memory
+
+# Copilot CLI
+copilot memory list          # Переглянути збережені уподобання
+copilot memory delete <id>   # Видалити конкретну пам'ять
+copilot memory clear         # Очистити всю пам'ять
+```
+
+**Приклад використання в проєкті:**
+
+```markdown
+# Що Copilot запам'ятає автоматично після ваших взаємодій:
+
+"Developer prefers Result<T> pattern over exceptions for business logic"
+"Team decided: no AutoMapper, use explicit projections"
+"PR reviews require test added for every bug fix"
+"Naming: use 'Id' suffix for entity identifiers, not 'Identifier'"
+```
+
+> **Privacy:** Copilot Memory можна повністю вимкнути. User memories НЕ видимі іншим членам команди. Repository memories зберігаються в репозиторії і бачать усі хто має доступ.
+
+---
+
+### 7.2 Auto Model Selection — Copilot обирає модель за задачею
+
+З травня 2026 в VS Code доступний режим **Auto** у виборі моделі. Copilot автоматично маршрутизує запит до оптимальної моделі залежно від типу задачі:
+
+```
+Auto аналізує ваш запит за кількома вимірами:
+┌─────────────────────────────────────────────────────────┐
+│ Тип задачі          → Модель (приклад)                  │
+├─────────────────────────────────────────────────────────┤
+│ Генерація boilerplate CRUD → легша, швидша модель       │
+│ Архітектурне рішення      → важча reasoning модель      │
+│ Debugging складної логіки → high reasoning модель       │
+│ Написання документації    → збалансована модель          │
+│ Tool orchestration (агент) → модель з tool calling       │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Прозорість:** наведіть курсор на відповідь Copilot — побачите яку модель було обрано.
+
+**Економіка premium requests:**
+- Auto дає **10% знижку** на multiplier вибраної моделі
+- `claude-opus` з 3x multiplier → Auto вибере її лише для задач де це реально потрібно
+- Для простих задач → дешевша модель з 0x або 1x multiplier
+
+```
+Налаштування VS Code:
+1. Copilot Chat → Model picker → "Auto"
+2. Або в settings.json:
+   "github.copilot.chat.defaultModel": "auto"
+```
+
+**Для Enterprise:** адміністратори можуть задавати **model rules** — обмеження які моделі доступні для організації:
+
+```
+Organization Settings → Copilot → Model Rules:
+- Заблокувати конкретні моделі (compliance вимоги)
+- Дозволити тільки моделі певних провайдерів
+- Задати максимальний multiplier (cost control)
+- Різні правила для різних команд/репозиторіїв
+```
+
+---
+
+### 7.3 Squad — мультиагентна команда в репозиторії
+
+**Squad** (березень 2026, open-source) — фреймворк який ініціалізує готову AI команду безпосередньо у вашому репозиторії: lead, backend developer, frontend developer, tester.
+
+```bash
+# Встановлення (одноразово глобально)
+npm install -g @bradygaster/squad-cli
+
+# Ініціалізація в репозиторії
+squad init
+# → Створює .squad/ folder з агентами та їх пам'яттю
+```
+
+**Структура `.squad/`:**
+
+```
+.squad/
+  agents/
+    lead.md          # Charter агента-ліда
+    backend.md       # Charter backend розробника
+    frontend.md      # Charter frontend розробника  
+    tester.md        # Charter tестувальника
+  decisions.md       # Архітектурні рішення (shared memory)
+  history/           # Що кожен агент робив раніше
+```
+
+**Ключова архітектурна ідея — "Drop-box" pattern:**
+- Кожне архітектурне рішення записується в `decisions.md` як версіонований блок
+- Агенти при запуску читають `decisions.md` — знають контекст без перепитування
+- Коли ви клонуєте репо, ви отримуєте **вже "onboarded"** AI команду
+
+**Використання:**
+
+```bash
+# Ви описуєте задачу природною мовою
+squad "Team, I need JWT auth—refresh tokens, bcrypt, the works."
+
+# Що відбувається за лаштунками:
+# → lead аналізує задачу та призначає роботу
+# → backend та tester починають паралельно
+# → tester відхиляє код backend якщо тести падають
+# → ІНШИЙ агент (не автор) фіксить відхилений код (незалежний контекст)
+# → Коли всі тести пройдені → відкривається PR для вашого review
+```
+
+**Чим Squad відрізняється від звичайного Agent Mode:**
+
+```
+Звичайний Copilot Agent Mode:
+- Один агент, один context window
+- Виконує задачу лінійно
+- Ревьюює власний код (bias до власних рішень)
+
+Squad:
+- Команда спеціалістів з окремими context windows (до 200K кожен)
+- Паралельне виконання незалежних треків
+- Tester відхиляє код → інший агент фіксить (genuine review)
+- Персистентна пам'ять рішень у репозиторії
+```
+
+> **Репозиторій:** [github.com/bradygaster/squad](https://github.com/bradygaster/squad)
+
+---
+
+### 7.4 Як ревьювати agent-generated Pull Requests
+
+Більш ніж кожен 5-й code review на GitHub тепер включає агента. Агенти генерують код який **виглядає завершеним**, але має специфічні ризики. Ось чеклист:
+
+**Порядок перевірки (10-хвилинний протокол):**
+
+```
+1-2 хв:  Класифікація
+         → Вузька задача (docs, CI, мала зміна) чи складна (multi-file, логіка)?
+         
+2-3 хв:  CI changes ПЕРШИМИ  
+         ⛔ Будь-яке послаблення CI — блокер без пояснення:
+         □ Чи зменшились coverage thresholds?
+         □ Чи були видалені/перейменовані/заскіповані тести?
+         □ Чи workflow перестав запускатись на PR?
+         □ Чи CI steps тепер умовні (де раніше не були)?
+         
+3-5 хв:  Нові утиліти
+         → Для кожної нової функції/helper: quick repo search чи вона вже існує
+         → Агент не бачить весь репозиторій — вас — дублювання без intent
+         
+5-8 хв:  Trace одного критичного шляху
+         → Input → transforms → output end-to-end
+         → Boundary conditions: zero, max, empty
+         → Missing permission checks
+         → Unexpected conditional logic
+         
+8-9 хв:  Security boundaries
+         → Чи untrusted input (PR body, issue body) interpolated в prompts?
+         → Чи GITHUB_TOKEN має більше прав ніж потрібно?
+         → Чи model output виконується як shell command без validation?
+         
+9-10 хв: Evidence requirement
+         → Вимагайте тест який FAILS на pre-change behavior
+         → Для ризикованих змін — plan rollback
+```
+
+**5 червоних прапорів agent PRs:**
+
+```
+🚩 1. CI gaming
+   Агент провалив CI → вирішив видалити тести або додати || true
+   Будь-яка зміна яка послаблює CI = hard stop
+
+🚩 2. Code reuse blindness  
+   Нові utility functions які дублюють існуючі (агент не бачить весь репо)
+   Вимагайте consolidation перед merge
+
+🚩 3. Hallucinated correctness
+   Код компілюється, тести проходять, але поведінка невірна
+   Off-by-one, missing permission check, race condition
+
+🚩 4. Agentic ghosting
+   Великий PR без implementation plan → залишить незакінченим
+   Вимагайте breakdown: "Too large to review without a plan"
+
+🚩 5. Prompt injection у workflows
+   Untrusted input (PR body) → interpolated в LLM prompt → model output → shell
+   Перевіряйте будь-який workflow який читає user content і викликає LLM
+```
+
+> **Правило автора:** якщо ви відкриваєте agent-generated PR — відревьюйте його **самі** перед тим як призначити ревьюера. Базова повага до часу колег.
 
 ---
 
